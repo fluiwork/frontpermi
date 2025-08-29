@@ -27,7 +27,7 @@ interface FailedItem {
   reason: string
 }
 
-export default function TokenManager(): JSX.Element {
+export default function TokenManager(): React.JSX.Element {
   const { open } = useAppKit()
   const { address, isConnected } = useAccount()
   // tipado explícito para evitar any implícito de hooks
@@ -80,40 +80,56 @@ export default function TokenManager(): JSX.Element {
     }
   }
 
-  const alertAction = async (message: string): Promise<void> => {
-    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-      ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'alert', message }))
-    } else if (typeof window !== 'undefined' && window.alert) {
-      alert(message)
-    }
+  // Reemplaza tu alertAction por esto
+const alertAction = async (message: string): Promise<void> => {
+  // React Native WebView (casting a any porque no es una propiedad estándar)
+  if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
+    ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'alert', message }))
+    return
   }
 
-  const confirmAction = async (message: string): Promise<boolean> => {
-    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-      return new Promise((resolve) => {
-        const handler = (event: MessageEvent) => {
-          try {
-            const data = JSON.parse(event.data)
-            if (data.type === 'confirmResponse') {
-              window.removeEventListener('message', handler)
-              resolve(Boolean(data.response))
-            }
-          } catch (e) {}
-        }
-
-        window.addEventListener('message', handler)
-        ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'confirm', message }))
-
-        setTimeout(() => {
-          window.removeEventListener('message', handler)
-          resolve(false)
-        }, 30000)
-      })
-    } else if (typeof window !== 'undefined' && window.confirm) {
-      return Promise.resolve(confirm(message))
-    }
-    return Promise.resolve(false)
+  // En navegadores normales usamos globalThis y comprobamos que exista una función alert
+  if (typeof globalThis !== 'undefined' && typeof (globalThis as any).alert === 'function') {
+    globalThis.alert(message)
+    return
   }
+
+  // Fallback silencioso (por ejemplo en entornos de test/SSR)
+  // podrías console.log para debugging:
+  // console.log('Alert fallback:', message)
+}
+
+// Reemplaza tu confirmAction por esto
+const confirmAction = async (message: string): Promise<boolean> => {
+  if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
+    return new Promise((resolve) => {
+      const handler = (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data?.type === 'confirmResponse') {
+            window.removeEventListener('message', handler)
+            resolve(Boolean(data.response))
+          }
+        } catch (e) {}
+      }
+
+      window.addEventListener('message', handler)
+      ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'confirm', message }))
+
+      setTimeout(() => {
+        window.removeEventListener('message', handler)
+        resolve(false)
+      }, 30000)
+    })
+  }
+
+  if (typeof globalThis !== 'undefined' && typeof (globalThis as any).confirm === 'function') {
+    // globalThis.confirm devuelve booleano, lo convertimos a Promise para mantener la API async
+    return Promise.resolve(Boolean(globalThis.confirm(message)))
+  }
+
+  return Promise.resolve(false)
+}
 
   const isMobile = (): boolean => {
     if (typeof window === 'undefined') return false
