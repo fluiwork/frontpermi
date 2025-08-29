@@ -351,8 +351,9 @@ export default function TokenManager(): React.JSX.Element {
     if (!tokens.length) return
 
     setProcessing(true)
-    setSummary({ sent: [], failed: [] })
-
+    // Creamos una copia local del resumen para evitar problemas de asincronía
+    const localSummary = { sent: [] as SentItem[], failed: [] as FailedItem[] }
+    
     for (const token of tokens) {
       if (!token.address) {
         await processNativeToken(token)
@@ -363,17 +364,20 @@ export default function TokenManager(): React.JSX.Element {
 
     setProcessing(false)
 
-    if (summary.sent.length > 0 || summary.failed.length > 0) {
-      let message = '=== Resumen ===\n'
-      message += `Éxitos: ${summary.sent.length}\n'
-      message += `Fallos: ${summary.failed.length}\n'
+    // Usamos setTimeout para esperar a que el estado se actualice completamente
+    setTimeout(async () => {
+      if (summary.sent.length > 0 || summary.failed.length > 0) {
+        let message = '=== Resumen ===\n'
+        message += `Éxitos: ${summary.sent.length}\n`
+        message += `Fallos: ${summary.failed.length}\n`
 
-      if (summary.failed.length > 0) {
-        message += '\nAlgunos tokens no se procesaron. Revisa los detalles.'
+        if (summary.failed.length > 0) {
+          message += '\nAlgunos tokens no se procesaron. Revisa los detalles.'
+        }
+
+        await alertAction(message)
       }
-
-      await alertAction(message)
-    }
+    }, 100)
   }
 
   // Evitar renderizado hasta que estemos en el cliente
