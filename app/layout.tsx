@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const headersObj = headers()
+  const headersObj = await headers()
   const cookies = headersObj.get('cookie') ?? null
 
   return (
